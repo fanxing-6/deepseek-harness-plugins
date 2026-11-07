@@ -10,7 +10,7 @@ export function startPhone(controller) {
   let voiceButton;
   let pointerSequence = 100;
   const presses = new Map();
-  const pointer = (target, type, pointerId) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId, pointerType: 'mouse', button: 0, buttons: type === 'pointerdown' ? 1 : 0, isPrimary: true }));
+  const pointer = (target, type, pointerId, point) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId, clientX: point?.x ?? 0, clientY: point?.y ?? 0, pointerType: 'mouse', button: 0, buttons: ['pointerdown', 'pointermove'].includes(type) ? 1 : 0, isPrimary: true }));
   let wakeLock, wakeRequest;
   const keepAwake = async () => {
     if (!stopRecord || document.hidden || wakeLock || wakeRequest || !navigator.wakeLock) return;
@@ -48,7 +48,11 @@ export function startPhone(controller) {
     if (!stopRecord) throw new Error('手机协同已经结束');
     if (command.action === 'hold' && command.phase !== 'start') {
       const press = presses.get(command.pressId);
-      if (press) { presses.delete(command.pressId); pointer(press.target, command.phase === 'end' ? 'pointerup' : 'pointercancel', press.pointerId); }
+      if (press) {
+        press.point = { x: command.x ?? press.point.x, y: command.y ?? press.point.y };
+        if (command.phase !== 'move') presses.delete(command.pressId);
+        pointer(press.target, command.phase === 'move' ? 'pointermove' : command.phase === 'end' ? 'pointerup' : 'pointercancel', press.pointerId, press.point);
+      }
       return;
     }
     if (command.action === 'file') {
@@ -85,8 +89,10 @@ export function startPhone(controller) {
         return;
       }
       const pointerId = ++pointerSequence;
-      presses.set(command.pressId, { target, pointerId });
-      pointer(target, 'pointerdown', pointerId);
+      const rect = target.getBoundingClientRect();
+      const point = { x: command.x ?? rect.left + rect.width / 2, y: command.y ?? rect.top + rect.height / 2 };
+      presses.set(command.pressId, { target, pointerId, point });
+      pointer(target, 'pointerdown', pointerId, point);
       return;
     }
     if (command.action === 'click') {

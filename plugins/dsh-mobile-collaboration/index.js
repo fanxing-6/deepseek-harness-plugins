@@ -7,7 +7,7 @@ import { Wire } from './wire.js';
 const viewport = z.object({ width: z.number().positive().max(10000), height: z.number().positive().max(10000), layoutWidth: z.number().positive().max(10000), layoutHeight: z.number().positive().max(10000), left: z.number(), top: z.number(), dpr: z.number().positive() }).strict();
 const command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('click'), id: z.number().int(), x: z.number(), y: z.number() }),
-  z.object({ action: z.literal('hold'), id: z.number().int(), pressId: z.string().uuid(), phase: z.enum(['start', 'end', 'cancel']) }),
+  z.object({ action: z.literal('hold'), id: z.number().int(), pressId: z.string().uuid(), phase: z.enum(['start', 'move', 'end', 'cancel']), x: z.number().finite().optional(), y: z.number().finite().optional() }),
   z.object({ action: z.literal('scroll'), id: z.number().int(), dx: z.number(), dy: z.number() }),
   z.object({ action: z.literal('input'), requestId: z.string().uuid(), id: z.number().int(), expected: z.string().max(100000), text: z.string().max(100000) }),
   z.object({ action: z.literal('blur'), id: z.number().int() }),
@@ -94,7 +94,7 @@ export default class MobileCollaboration extends TypertRemoteService {
           peer.hold = data.command;
         } else {
           if (peer.hold?.pressId !== data.command.pressId) return;
-          peer.hold = null;
+          if (data.command.phase !== 'move') peer.hold = null;
         }
       }
       this.send(phone, data);

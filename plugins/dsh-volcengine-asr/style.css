@@ -9,6 +9,9 @@
 .dsh-voice-panel button:focus-visible{outline:2px solid #5474b3;outline-offset:2px}
 .dsh-voice-panel .dsh-voice-row .dsh-voice-hold{position:relative;flex:1;min-width:0;min-height:52px;display:flex;align-items:center;justify-content:center;border:1px solid var(--dsw-alias-border-l2,#d8dce4);border-radius:12px;background:var(--dsw-alias-background-secondary,#f3f4f6);color:inherit;font:600 16px/1.4 system-ui;letter-spacing:.03em;padding:12px 20px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;cursor:pointer;transition:background .12s,border-color .12s}
 .dsh-voice-panel .dsh-voice-hold[aria-pressed=true]{background:#e7edff;color:#244ca7;border-color:#92abe8;padding-bottom:19px}
+.dsh-voice-gesture-hint{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);white-space:nowrap;padding:6px 10px;border-radius:8px;background:#25314a;color:#fff;font:500 13px/1.4 system-ui;pointer-events:none;z-index:2}
+.dsh-voice-panel .dsh-voice-hold[data-volc-cancel=true]{background:#fff0f0;color:#b42335;border-color:#e68d99}
+.dsh-voice-hold[data-volc-cancel=true] .dsh-voice-gesture-hint{background:#b42335}
 .dsh-voice-panel button:disabled{opacity:.5;cursor:default}
 .dsh-voice-transcript{font:500 15px/1.5 system-ui;white-space:pre-wrap;overflow-wrap:anywhere;max-height:min(132px,24dvh);overflow:auto;overscroll-behavior:contain;padding:2px 4px;color:inherit}
 .dsh-voice-meter{position:absolute;bottom:8px;left:20%;width:60%;height:4px;overflow:hidden;border-radius:3px;background:#92abe84d}
@@ -28,6 +31,7 @@
 [data-composer-card]:has([data-volc-mode=voice]) [class$="_activityExpanded"]{flex:1;min-width:0;width:100%}
 [data-composer-card]:has([data-volc-mode=voice][data-volc-generating=false]) [class$="_primary"]{display:none}
 body[data-ds-dark-theme] .dsh-voice-hold[aria-pressed=true]{background:#243559;color:#b3c8ff;border-color:#5474b3}
+body[data-ds-dark-theme] .dsh-voice-hold[data-volc-cancel=true]{background:#48232c;color:#ffc1ca;border-color:#c77382}
 .dsh-mobile-dense .dsh-voice-panel .dsh-voice-row .dsh-voice-hold{touch-action:none;min-height:52px}
 @media(max-width:700px){
   .dsh-voice-panel .dsh-voice-toggle{width:44px;height:44px}

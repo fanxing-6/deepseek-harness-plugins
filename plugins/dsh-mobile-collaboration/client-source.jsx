@@ -103,7 +103,14 @@ function Preview({ controller, phoneCount, joinUrl }) {
     const press = heldPress.current;
     if (!press || event && press.pointerId !== event.pointerId) return;
     heldPress.current = null;
-    if (controller.handle) command({ action: 'hold', id: press.id, pressId: press.pressId, phase });
+    const point = event ? { x: press.x + (event.clientX - press.clientX) / press.scale, y: press.y + (event.clientY - press.clientY) / press.scale } : {};
+    if (controller.handle) command({ action: 'hold', id: press.id, pressId: press.pressId, phase, ...point });
+  };
+  const moveHold = event => {
+    const press = heldPress.current;
+    if (!press || press.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    command({ action: 'hold', id: press.id, pressId: press.pressId, phase: 'move', x: press.x + (event.clientX - press.clientX) / press.scale, y: press.y + (event.clientY - press.clientY) / press.scale });
   };
   const startHold = event => {
     suppressClick.current = false;
@@ -115,10 +122,10 @@ function Preview({ controller, phoneCount, joinUrl }) {
     const id = player.current.getMirror().getId(node);
     if (id < 0) return;
     const pressId = crypto.randomUUID();
-    heldPress.current = { id, pressId, pointerId: event.pointerId };
+    heldPress.current = { id, pressId, pointerId: event.pointerId, x: point.x, y: point.y, clientX: event.clientX, clientY: event.clientY, scale };
     event.currentTarget.setPointerCapture(event.pointerId);
     controller.update({ error: '' });
-    command({ action: 'hold', id, pressId, phase: 'start' });
+    command({ action: 'hold', id, pressId, phase: 'start', x: point.x, y: point.y });
   };
   useEffect(() => {
     const blur = () => finishHold('cancel');
@@ -153,7 +160,7 @@ function Preview({ controller, phoneCount, joinUrl }) {
   return <div ref={area} className="dsh-collab-area">
     <div ref={stage} className="dsh-collab-stage" style={{ width: viewport ? viewport.width * scale : 0, height: viewport ? viewport.height * scale : 0, visibility: received ? 'visible' : 'hidden' }}>
       <div ref={surface} className="dsh-collab-replay" style={{ width: viewport?.layoutWidth, height: viewport?.layoutHeight, transform: `scale(${scale}) translate(${-1 * (viewport?.left ?? 0)}px,${-1 * (viewport?.top ?? 0)}px)` }} />
-      <div className="dsh-collab-overlay" role="application" aria-label="手机实时画面" tabIndex={0} onClick={click} onPointerDown={startHold} onPointerUp={event => finishHold('end', event)} onPointerCancel={event => finishHold('cancel', event)} onLostPointerCapture={event => finishHold('cancel', event)} onContextMenu={event => { if (heldPress.current) event.preventDefault(); }} onKeyDown={event => { if (event.key === 'Escape') { finishHold('cancel'); setEditor(null); const doc = player.current?.iframe.contentDocument; const node = doc?.activeElement; const id = node && player.current.getMirror().getId(node); if (id >= 0) command({ action: 'key', id, key: 'Escape' }); } }} />
+      <div className="dsh-collab-overlay" role="application" aria-label="手机实时画面" tabIndex={0} onClick={click} onPointerDown={startHold} onPointerMove={moveHold} onPointerUp={event => finishHold('end', event)} onPointerCancel={event => finishHold('cancel', event)} onLostPointerCapture={event => finishHold('cancel', event)} onContextMenu={event => { if (heldPress.current) event.preventDefault(); }} onKeyDown={event => { if (event.key === 'Escape') { finishHold('cancel'); setEditor(null); const doc = player.current?.iframe.contentDocument; const node = doc?.activeElement; const id = node && player.current.getMirror().getId(node); if (id >= 0) command({ action: 'key', id, key: 'Escape' }); } }} />
       {editor && (editor.select
         ? <select ref={editorRef} className="dsh-collab-edit" aria-label="手机同步选择" style={editorStyle} value={editor.value} onChange={event => { command({ action: 'select', id: editor.id, value: event.target.value }); setEditor(null); }} onBlur={() => setEditor(null)}>{editor.options.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.text}</option>)}</select>
         : <textarea ref={editorRef} className="dsh-collab-edit" aria-label="手机同步输入" style={editorStyle} value={editor.value} onChange={edit} onBlur={blurEditor} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); blurEditor(); } }} />)}

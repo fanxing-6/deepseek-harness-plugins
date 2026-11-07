@@ -15,6 +15,7 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, onActiveCha
   const [phase, setPhase] = useState('idle');
   const [error, setError] = useState('');
   const [level, setLevel] = useState(0);
+  const [cancelArmed, setCancelArmed] = useState(false);
   const current = useRef(null);
   const held = useRef(null);
 
@@ -38,11 +39,15 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, onActiveCha
     recordings.delete(active.recording);
   }
 
-  async function abortRecording() {
+  async function abortRecording(discard = true) {
     const active = current.current;
     held.current = null;
     current.current = null;
-    setPhase('idle'); setError(''); setLevel(0);
+    let message = '';
+    if (discard && active?.text && !inputActions.insertText('', active.span)) {
+      message = '草稿已被修改，录音已取消，请检查输入内容。';
+    }
+    setPhase('idle'); setError(message); setLevel(0); setCancelArmed(false);
     if (active) await release(active);
   }
 
@@ -58,15 +63,15 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, onActiveCha
     if (current.current !== active) return;
     held.current = null;
     current.current = null;
-    setPhase('idle'); setError(failure.message); setLevel(0);
+    setPhase('idle'); setError(failure.message); setLevel(0); setCancelArmed(false);
     await release(active);
   }
 
   useEffect(() => {
-    setPhase('idle'); setError(''); setLevel(0);
+    setPhase('idle'); setError(''); setLevel(0); setCancelArmed(false);
     const escape = event => { if (event.key === 'Escape' && current.current) { event.preventDefault(); void abortRecording(); } };
-    const hidden = () => { if (document.hidden && held.current) void abortRecording(); };
-    const blur = () => { if (held.current) void abortRecording(); };
+    const hidden = () => { if (document.hidden && held.current) void abortRecording(false); };
+    const blur = () => { if (held.current) void abortRecording(false); };
     document.addEventListener('keydown', escape);
     document.addEventListener('visibilitychange', hidden);
     window.addEventListener('blur', blur);
@@ -86,7 +91,7 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, onActiveCha
     if (inputActions.captureInsertion().draftRev !== active.span.draftRev) throw new Error('输入框已修改，请检查内容后发送。');
     clearTimeout(active.submitTimer);
     current.current = null;
-    setPhase('idle'); setLevel(0);
+    setPhase('idle'); setLevel(0); setCancelArmed(false);
     if (active.text.trim()) inputActions.submit();
     else setError('尚未收到识别文字，请重新按住说话。');
     void release(active);
@@ -140,7 +145,7 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, onActiveCha
     };
     current.current = active;
     recordings.add(active.recording);
-    setPhase('connecting'); setError(''); setLevel(0);
+    setPhase('connecting'); setError(''); setLevel(0); setCancelArmed(false);
     try {
       await recording.open(microphone.getSnapshot().id, failure => { void fail(active, failure); });
       if (current.current !== active) { await recording.dispose(); return; }
@@ -189,14 +194,29 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, onActiveCha
   function press(event) {
     if (event.button !== 0 || !event.isPrimary || locked || current.current) return;
     event.preventDefault();
-    held.current = { pointerId: event.pointerId };
+    held.current = { pointerId: event.pointerId, startY: event.clientY, top: event.currentTarget.getBoundingClientRect().top, cancel: false };
     if (event.nativeEvent.isTrusted) event.currentTarget.setPointerCapture(event.pointerId);
     void start();
   }
 
   function lift(event) {
     if (held.current?.pointerId !== event.pointerId) return;
-    event.preventDefault(); held.current = null; void finish();
+    event.preventDefault();
+    move(event);
+    const cancel = held.current.cancel;
+    held.current = null;
+    if (cancel) void abortRecording();
+    else { setCancelArmed(false); void finish(); }
+  }
+
+  function move(event) {
+    const press = held.current;
+    if (!press || press.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const cancel = press.cancel ? event.clientY < press.top : press.startY - event.clientY >= 56;
+    if (cancel === press.cancel) return;
+    press.cancel = cancel;
+    setCancelArmed(cancel);
   }
 
   function cancelPointer(event) {
@@ -216,17 +236,18 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, onActiveCha
   }
 
   const active = phase !== 'idle';
-  const label = phase === 'connecting' ? '正在准备录音' : phase === 'finishing' ? '正在识别并发送' : active ? '松开发送' : '按住说话';
+  const label = cancelArmed && active ? '松开取消' : phase === 'connecting' ? '正在准备录音' : phase === 'finishing' ? '正在识别并发送' : active ? '松开发送' : '按住说话';
   return <div ref={root} className="dsh-voice-panel" data-volc-mode={voiceMode ? 'voice' : 'text'} data-volc-generating={generating}>
       {voiceMode && draft.trim() && <div className="dsh-voice-transcript" aria-label="语音转写内容" aria-live="polite">{draft}</div>}
       <div className="dsh-voice-row">
         {voiceMode && <button type="button" className="dsh-voice-hold" disabled={!active && locked}
-          aria-label={label} aria-pressed={active} title="按住说话，松开发送"
-          data-volc-speech={phase} data-volc-gesture="hold"
-          onPointerDown={press} onPointerUp={lift} onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer}
+          aria-label={label} aria-pressed={active} title="按住说话，松开发送，上滑取消"
+          data-volc-speech={phase} data-volc-gesture="hold" data-volc-cancel={cancelArmed}
+          onPointerDown={press} onPointerMove={move} onPointerUp={lift} onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer}
           onKeyDown={keyDown} onKeyUp={keyUp}
           onContextMenu={event => event.preventDefault()} onClick={event => event.preventDefault()}>
           <span>{label}</span>
+          {active && phase !== 'finishing' && <span className="dsh-voice-gesture-hint" role="status">{cancelArmed ? '松手取消 · 滑回继续' : '松开发送 · 上滑取消'}</span>}
           {active && <span role="meter" className="dsh-voice-meter" aria-label="麦克风音量" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(level * 100)}>
             <span style={{ transform: `scaleX(${level})` }} />
           </span>}
