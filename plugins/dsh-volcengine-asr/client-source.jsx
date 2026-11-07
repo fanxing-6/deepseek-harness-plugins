@@ -7,7 +7,7 @@ import styles from './style.css';
 
 export const inject = ['remote', 'slots'];
 
-function VoiceInput({ sessionId, inputActions, useInput, useSession, onActiveChange, locked, remote, microphone, recordings }) {
+function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, remote, microphone, recordings }) {
   const [voiceMode, setVoiceMode] = useState(false);
   const draft = useInput(state => state?.draft ?? '');
   const generating = useSession(state => state.running) ?? false;
@@ -20,10 +20,6 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, onActiveCha
   const held = useRef(null);
 
   useEffect(() => { setVoiceMode(false); }, [sessionId]);
-  useEffect(() => {
-    onActiveChange(voiceMode);
-    return () => onActiveChange(false);
-  }, [voiceMode, onActiveChange]);
 
   function changeMode(next) {
     if (current.current) return;

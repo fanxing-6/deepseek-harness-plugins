@@ -26,9 +26,11 @@
 [data-composer-card]:has(.dsh-voice-panel) [class$="_primary"]{position:absolute;right:8px;bottom:14px}
 [data-composer-card]:has([data-volc-mode=voice]){padding-top:6px;gap:0}
 [data-composer-card]:has([data-volc-mode=voice]) [data-input-scroll]{display:none}
-[data-composer-card]:has([data-volc-mode=voice]) [class$="_row"]{padding:2px 8px 0;gap:8px}
-[data-composer-card]:has([data-volc-mode=voice]) [class$="_trailingActive"]{flex:1;min-width:0;width:100%}
-[data-composer-card]:has([data-volc-mode=voice]) [class$="_activityExpanded"]{flex:1;min-width:0;width:100%}
+[data-composer-card]:has([data-volc-mode=voice]) [class$="_row"]{display:grid;grid-template-columns:minmax(0,1fr) auto;padding:2px 8px 0;gap:6px 8px}
+[data-composer-card]:has([data-volc-mode=voice]) [class$="_tools"]{grid-column:1;grid-row:1;min-width:0}
+[data-composer-card]:has([data-volc-mode=voice]) :is([class$="_trailing"],[class$="_trailingActive"]){display:contents}
+[data-composer-card]:has([data-volc-mode=voice]) [class$="_standardControls"]{grid-column:2;grid-row:1;min-width:0}
+[data-composer-card]:has([data-volc-mode=voice]) :is([class$="_activity"],[class$="_activityExpanded"]){grid-column:1/-1;grid-row:2;min-width:0;width:100%}
 [data-composer-card]:has([data-volc-mode=voice][data-volc-generating=false]) [class$="_primary"]{display:none}
 body[data-ds-dark-theme] .dsh-voice-hold[aria-pressed=true]{background:#243559;color:#b3c8ff;border-color:#5474b3}
 body[data-ds-dark-theme] .dsh-voice-hold[data-volc-cancel=true]{background:#48232c;color:#ffc1ca;border-color:#c77382}
