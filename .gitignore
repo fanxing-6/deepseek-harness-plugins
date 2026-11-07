@@ -1,0 +1,16 @@
+node_modules/
+work/
+.DS_Store
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+.credentials.yaml
+https-config.json
+server.json
+server.json.new
+plugins/dsh-volcengine-asr/client.js
+plugins/dsh-mobile-collaboration/client.js

@@ -1,0 +1,2 @@
+import { build } from 'esbuild';
+await build({ entryPoints: ['client-source.jsx'], outfile: 'client.js', bundle: true, minify: true, format: 'cjs', platform: 'browser', target: 'chrome120', external: ['react', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives', 'zod'], loader: { '.css': 'text' }, banner: { js: 'window.__ModuleLoader__.load({id:"@local/dsh-mobile-collaboration",factory:(require)=>{const module={exports:{}};const exports=module.exports;' }, footer: { js: 'return module.exports;}});' } });

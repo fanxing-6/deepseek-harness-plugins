@@ -1,0 +1,33 @@
+{
+  "name": "@local/dsh-volcengine-asr",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "豆包实时语音听写",
+  "scripts": { "build": "node build.mjs" },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./typert": "./typert.js",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1",
+    "binary-parser": "2.3.0",
+    "ws": "8.18.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-gateway",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  }
+}

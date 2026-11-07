@@ -1,0 +1,12 @@
+{
+  "name": "deepseek-harness-plugins",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DeepSeek 插件：语音输入、手机协同、移动布局与局域网 HTTPS",
+  "workspaces": ["plugins/*"],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "check": "node scripts/check.mjs"
+  },
+  "engines": { "node": ">=24" }
+}

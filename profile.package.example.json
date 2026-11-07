@@ -1,0 +1,9 @@
+{
+  "name": "dsh-profile-desktop",
+  "private": true,
+  "dependencies": {
+    "@local/dsh-volcengine-asr": "link:/absolute/path/to/deepseek-harness-plugins/plugins/dsh-volcengine-asr",
+    "@local/dsh-mobile-collaboration": "link:/absolute/path/to/deepseek-harness-plugins/plugins/dsh-mobile-collaboration",
+    "@local/dsh-lan-access": "link:/absolute/path/to/deepseek-harness-plugins/plugins/dsh-lan-access"
+  }
+}

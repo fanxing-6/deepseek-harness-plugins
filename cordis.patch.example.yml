@@ -1,0 +1,15 @@
+- insert:
+    - id: volcengine-voice-input
+      name: '@local/dsh-volcengine-asr'
+      config:
+        apiKeyRef: VOLCENGINE_ASR_API_KEY
+    - id: lan-access
+      name: '@local/dsh-lan-access'
+      config:
+        host: LAN_IP
+        port: 3080
+        securePort: 3443
+    - id: mobile-collaboration
+      name: '@local/dsh-mobile-collaboration'
+      config:
+        joinUrl: https://dsh.example.com:3443/

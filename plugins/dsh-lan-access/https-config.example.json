@@ -1,0 +1,7 @@
+{
+  "domain": "dsh.example.com",
+  "address": "LAN_IP",
+  "zoneId": "CLOUDFLARE_ZONE_ID",
+  "tokenFile": "/absolute/path/to/cloudflare-token",
+  "directory": "/absolute/path/to/dsh-certificates"
+}

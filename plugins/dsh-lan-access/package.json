@@ -1,0 +1,9 @@
+{
+  "name": "@local/dsh-lan-access",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 局域网访问入口",
+  "exports": { ".": "./index.js", "./package.json": "./package.json" },
+  "dependencies": { "http-proxy": "1.18.1", "acme-client": "5.4.0" }
+}

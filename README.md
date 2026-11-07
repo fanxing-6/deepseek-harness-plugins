@@ -1,0 +1,53 @@
+# DeepSeek 插件
+
+通过 DeepSeek Harness 插件接口提供语音输入、手机协同、移动端布局和局域网 HTTPS。每个插件保存在独立文件夹中。
+
+| 目录 | 功能 |
+| --- | --- |
+| `plugins/dsh-volcengine-asr` | 豆包 WebSocket 实时语音识别、音量条、左侧语音／键盘切换、中间长按说话与松手自动发送 |
+| `plugins/dsh-mobile-collaboration` | 右侧手机协同面板、设备发现、等比例网页显示、点击、滚动、文字、长按录音及图片输入同步 |
+| `plugins/dsh-mobile-ui` | 独立移动端布局、输入法组合输入处理、键盘高度适配 |
+| `plugins/dsh-lan-access` | 局域网 HTTP／HTTPS 入口、WebSocket 转发、Cloudflare DNS 验证与 Let’s Encrypt 证书续期 |
+
+## 构建
+
+使用 Node.js 24 和 npm，在仓库根目录运行：
+
+```sh
+npm ci
+npm run build
+npm run check
+```
+
+语音输入和手机协同插件的 `client-source.jsx` 是前端入口，构建生成各自的 `client.js`。独立移动布局插件直接维护 `client.js`。构建产物和依赖目录由本地生成。
+
+## 配置
+
+当前代码用于官方 DeepSeek Harness 桌面版 `0.2.2-rc.1`，涉及 DSH 的插件注册、Typert 服务和界面插槽。应用升级后需要重新检查接口与界面样式兼容性。
+
+1. 完成上述依赖安装与构建。
+2. 将 `profile.package.example.json` 中的依赖条目合并到目标 DSH profile 的 `package.json`，把示例路径换成插件的实际绝对路径。保留 profile 已有的其他配置。Windows 路径使用正斜线，例如 `C:/path/to/deepseek-harness-plugins/plugins/dsh-volcengine-asr`。
+3. 将 `cordis.patch.example.yml` 中所需插件的条目合并到 profile 的 `cordis.patch.yml`。按安装环境填写局域网地址、端口与访问域名，并由 DSH 完成 profile 依赖解析后重新载入应用。
+4. 语音插件通过 DSH 凭据服务读取 `VOLCENGINE_ASR_API_KEY`。在目标环境的 DSH 凭据配置中保存实际 API Key。
+5. 使用 HTTPS 插件时，复制其 `https-config.example.json` 为同目录下的 `https-config.json`，填写域名、局域网地址、Cloudflare Zone ID、Token 文件路径和证书目录。证书签发需要该域名的 DNS 管理权限；当前签发流程会接受 Let’s Encrypt 服务条款。
+6. 手机通过配置好的 HTTPS 地址访问 DSH，允许麦克风权限。电脑右侧的「手机协同」面板会显示已连接的手机。
+
+`dsh-mobile-collaboration` 已包含移动端紧凑布局。需要单独的移动布局时可以选用 `dsh-mobile-ui`，它使用当前 Mac 桌面版对应的界面样式标识。每个页面只启用一套移动布局插件。
+
+## 交互与运行边界
+
+- 输入区域左侧固定语音／键盘切换按钮，中间在文字输入框与长按语音区域之间切换。
+- 松手后继续接收识别结果；最终结果提前到达时立即提交，等待达到 900 毫秒时提交已收到的文字。尚未收到文字时提示重新录音。识别服务延迟可能影响最后一部分文字的完整性。
+- 当前单次音频上限为 120 秒；达到上限后结束音频上传，松手提交已有识别内容。
+- 手机协同显示和控制 DSH 手机网页，包括滚动与输入；电脑主对话区保持独立操作。
+- 局域网入口复用宿主会话权限，能够连接该入口的设备可访问对应 DSH 功能。HTTPS 证书由 Cloudflare DNS 验证签发，每日检查续期。
+
+## 本地配置与发布内容
+
+仓库只包含代码、依赖锁文件和示例配置。真实 API Key、Token、凭据文件、域名配置、证书及私钥、用户会话、录音和测试截图保存在各自设备上。Git 提交使用 GitHub 隐私邮箱。
+
+## 验证范围
+
+已完成 Mac 与 Windows 服务上的真实语音发送验证、约 65 秒长语音的前文保留检查，以及桌面和小米 14 Pro 的左侧切换布局与键盘适配检查。最近一轮手机语音自动发送验证尚未完成。
+
+`npm run check` 验证插件导出入口与 JavaScript 语法；语音、证书签发和手机协同需要配置实际服务后进行运行验证。

@@ -1,0 +1,12 @@
+{
+  "name": "@local/dsh-mobile-collaboration",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "手机与电脑实时协同",
+  "scripts": { "build": "node build.mjs" },
+  "exports": { ".": "./index.js", "./client": "./client.js", "./typert": "./typert.js", "./package.json": "./package.json" },
+  "dependencies": { "zod": "4.4.3", "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1" },
+  "devDependencies": { "esbuild": "0.25.12", "rrweb": "2.2.0", "fflate": "0.8.2", "base64-arraybuffer": "1.0.2" },
+  "dsh": { "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-api-gateway", "@deepseek-ai/dsh-client-ui-sidebar-right", "@deepseek-ai/dsh-client-ui-conversation"] } }
+}

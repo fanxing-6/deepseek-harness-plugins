@@ -1,0 +1,9 @@
+{
+  "name": "@local/dsh-mobile-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 手机布局与输入法适配",
+  "exports": { ".": "./index.js", "./client": "./client.js", "./package.json": "./package.json" },
+  "dsh": { "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-client-ui-layout", "@deepseek-ai/dsh-client-ui-conversation"] } }
+}
