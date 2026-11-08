@@ -11,22 +11,28 @@ export function startPhone(controller) {
   let pointerSequence = 100;
   const presses = new Map();
   const pointer = (target, type, pointerId, point) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId, clientX: point?.x ?? 0, clientY: point?.y ?? 0, pointerType: 'mouse', button: 0, buttons: ['pointerdown', 'pointermove'].includes(type) ? 1 : 0, isPrimary: true }));
-  let wakeLock, wakeRequest;
+  let wakeLock, wakeRequest, disposed = false;
+  const needsWakeLock = () => !disposed && controller.state.connected && !document.hidden;
+  const releaseWakeLock = () => { const lock = wakeLock; wakeLock = null; document.documentElement.dataset.mobileCollabWakeLock = 'released'; void lock?.release(); };
   const keepAwake = async () => {
-    if (!stopRecord || document.hidden || wakeLock || wakeRequest || !navigator.wakeLock) return;
-    const session = stopRecord;
+    if (!needsWakeLock() || wakeLock || wakeRequest) return;
+    if (!navigator.wakeLock) { document.documentElement.dataset.mobileCollabWakeLock = 'unsupported'; return; }
     wakeRequest = navigator.wakeLock.request('screen');
     try {
       const lock = await wakeRequest;
-      if (stopRecord !== session) { await lock.release(); return; }
+      if (!needsWakeLock()) { await lock.release(); return; }
       wakeLock = lock;
-      badge.title = '协同时屏幕保持亮起，点击结束后恢复';
-      lock.addEventListener('release', () => { if (wakeLock === lock) wakeLock = null; });
+      document.documentElement.dataset.mobileCollabWakeLock = 'active';
+      if (badge) badge.title = 'DSH 网页在前台时屏幕保持亮起';
+      lock.addEventListener('release', () => {
+        if (wakeLock === lock) { wakeLock = null; document.documentElement.dataset.mobileCollabWakeLock = 'released'; }
+      });
     } catch (error) {
-      if (stopRecord === session && !document.hidden) controller.send({ type: 'notice', text: `手机无法保持亮屏：${error.message}` });
-    } finally { wakeRequest = null; if (stopRecord && stopRecord !== session) void keepAwake(); }
+      document.documentElement.dataset.mobileCollabWakeLock = 'denied';
+      if (needsWakeLock()) controller.send({ type: 'notice', text: `手机无法保持亮屏：${error.message}` });
+    } finally { wakeRequest = null; }
   };
-  const stop = () => { for (const press of presses.values()) pointer(press.target, 'pointercancel', press.pointerId); presses.clear(); stopRecord?.(); stopRecord = null; badge?.remove(); badge = null; voiceButton?.remove(); voiceButton = null; const lock = wakeLock; wakeLock = null; void lock?.release(); };
+  const stop = () => { for (const press of presses.values()) pointer(press.target, 'pointercancel', press.pointerId); presses.clear(); stopRecord?.(); stopRecord = null; badge?.remove(); badge = null; voiceButton?.remove(); voiceButton = null; };
   const start = () => {
     stop();
     badge = document.createElement('button');
@@ -135,6 +141,7 @@ export function startPhone(controller) {
     }
   };
   const handle = data => {
+    if (data.type === 'ready') void keepAwake();
     if (data.type === 'stop') stop();
     else if (data.type === 'start') start();
     else if (data.type === 'command') {
@@ -143,14 +150,15 @@ export function startPhone(controller) {
     }
   };
   const unsubscribe = controller.onFrame(handle);
-  const visible = () => { controller.presence(); if (!document.hidden && stopRecord) { record.takeFullSnapshot(); void keepAwake(); } };
+  const visible = () => { controller.presence(); if (document.hidden) releaseWakeLock(); else { if (stopRecord) record.takeFullSnapshot(); void keepAwake(); } };
   const resized = () => controller.presence();
+  const wakeTimer = setInterval(() => { void keepAwake(); }, 15000);
   document.addEventListener('visibilitychange', visible);
   visualViewport?.addEventListener('resize', resized);
   visualViewport?.addEventListener('scroll', resized);
   window.addEventListener('resize', resized);
   return () => {
-    stop(); unsubscribe(); document.removeEventListener('visibilitychange', visible);
+    disposed = true; clearInterval(wakeTimer); releaseWakeLock(); stop(); unsubscribe(); document.removeEventListener('visibilitychange', visible);
     visualViewport?.removeEventListener('resize', resized); visualViewport?.removeEventListener('scroll', resized); window.removeEventListener('resize', resized);
   };
 }

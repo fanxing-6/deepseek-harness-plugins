@@ -19,6 +19,7 @@ const message = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hello'), mobile: z.boolean(), label: z.string().max(80), visible: z.boolean(), viewport }),
   z.object({ type: z.literal('presence'), visible: z.boolean(), viewport }),
   z.object({ type: z.literal('watch'), phone: z.string().uuid().nullable() }),
+  z.object({ type: z.literal('navigation'), state: z.object({ selection: z.object({ sessionId: z.string().max(300).optional(), subagentAddress: z.record(z.string(), z.unknown()).optional() }).strict(), panelId: z.string().max(300).nullable() }).strict() }),
   z.object({ type: z.literal('event'), event: z.object({ type: z.number(), timestamp: z.number() }).passthrough() }),
   z.object({ type: z.literal('command'), command }),
   z.object({ type: z.literal('notice'), text: z.string().max(300) }),
@@ -82,6 +83,13 @@ export default class MobileCollaboration extends TypertRemoteService {
       peer.watching = phone.id; phone.watchers.add(peer.id);
       for (const id of phone.watchers) this.send(this.peers.get(id), { type: 'reset', viewport: phone.info.viewport, visible: phone.info.visible });
       this.send(phone, { type: 'start' });
+    } else if (data.type === 'navigation') {
+      if (peer.info.mobile) {
+        for (const id of peer.watchers) this.send(this.peers.get(id), data);
+      } else {
+        const phone = this.peers.get(peer.watching);
+        if (phone?.watchers.has(peer.id) && !phone.closed) this.send(phone, data);
+      }
     } else if (data.type === 'event') {
       if (!peer.info.mobile) throw new Error('画面来源必须是手机');
       for (const id of peer.watchers) this.send(this.peers.get(id), data);

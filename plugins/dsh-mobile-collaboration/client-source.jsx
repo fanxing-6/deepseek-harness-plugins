@@ -7,10 +7,10 @@ import { TYPERT_REMOTE } from './remote.js';
 import { Controller } from './controller.js';
 import { startPhone, inputText } from './phone.js';
 import { configureMobile } from './mobile.js';
+import { synchronizeNavigation } from './navigation.js';
 
-export const inject = ['remote', 'slots', 'sidebarRightTabs', 'sidebarRight', 'layout'];
+export const inject = ['remote', 'slots', 'layout', 'uiWorkspace', 'sessions'];
 const TYPE = '@local/dsh-mobile-collaboration';
-const KIND = 'mobile-collaboration';
 
 function ComposerBridge({ inputActions, controller }) {
   useEffect(() => {
@@ -170,8 +170,7 @@ function Preview({ controller, phoneCount, joinUrl }) {
   </div>;
 }
 
-function CollaborationPanel({ controller, useTabInfo }) {
-  const { tab } = useTabInfo();
+function CollaborationPanel({ controller }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const files = useRef(null);
   const addImages = async event => {
@@ -184,13 +183,6 @@ function CollaborationPanel({ controller, useTabInfo }) {
       }
     } catch (error) { controller.update({ error: error.message }); }
   };
-  useEffect(() => {
-    if (tab.visible) controller.start();
-    return () => { if (tab.visible) controller.stop(); };
-  }, [controller, tab.visible]);
-  useEffect(() => {
-    if (tab.visible && state.connected && !state.selected && !state.suspended && state.phones.length === 1) controller.watch(state.phones[0].id);
-  }, [tab.visible, state.connected, state.selected, state.suspended, state.phones]);
   return <section className="dsh-collab" data-mobile-collab="true" aria-label="手机协同">
     <div className="dsh-collab-head">
       <select aria-label="选择协同手机" value={state.selected ?? ''} onChange={event => controller.watch(event.target.value || null)} disabled={!state.connected}>
@@ -207,14 +199,27 @@ function CollaborationPanel({ controller, useTabInfo }) {
   </section>;
 }
 
-function OpenButton({ open }) {
-  return <button type="button" aria-label="手机协同" title="手机协同" onClick={open} style={{ border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', width: 28, height: 28, padding: 4 }}>
+function OpenButton({ controller, wide = true }) {
+  const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  return <button type="button" className="dsh-collab-launcher" aria-label="手机协同" title="手机协同" aria-expanded={state.opened} onClick={() => state.opened ? controller.close() : controller.open()}>
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3" /><path d="M10 18h4" /></svg>
+    {wide && <span>手机协同</span>}
   </button>;
 }
 
-function MobileMenu({ toggle }) {
-  return <button className="dsh-mobile-menu" type="button" aria-label="打开会话列表" onClick={toggle}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 6h16M4 12h16M4 18h16" /></svg></button>;
+function GlobalCollaboration({ controller }) {
+  const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  return <>
+    <div className="dsh-collab-global-launcher"><OpenButton controller={controller} /></div>
+    {state.opened && <aside className="dsh-collab-global" data-mobile-collab="true" aria-label="全局手机协同">
+      <div className="dsh-collab-global-title"><strong>手机协同</strong><button aria-label="关闭手机协同" onClick={() => controller.close()}>关闭</button></div>
+      <CollaborationPanel controller={controller} />
+    </aside>}
+  </>;
+}
+
+function MobileMenu({ toggle, global = false }) {
+  return <button className={global ? 'dsh-mobile-menu dsh-collab-phone-menu' : 'dsh-mobile-menu'} type="button" aria-label="打开会话列表" onClick={toggle}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 6h16M4 12h16M4 18h16" /></svg></button>;
 }
 
 export async function apply(ctx) {
@@ -224,12 +229,14 @@ export async function apply(ctx) {
   const label = device?.model || (/iPhone|iPad/.test(navigator.userAgent) ? 'iPhone / iPad' : 'Android 手机');
   const style = document.createElement('style'); style.textContent = rrStyles + styles; document.head.append(style);
   let controller, disposePhone, disposeMobile;
-  const registration = ctx.inject(['remote.mobileCollab', 'slots', 'sidebarRightTabs', 'sidebarRight', 'layout'], child => {
+  const registration = ctx.inject(['remote.mobileCollab', 'slots', 'layout', 'uiWorkspace', 'sessions'], child => {
     controller = new Controller(child.remote, mobile, label);
+    child.effect(() => synchronizeNavigation(child, controller));
     child.effect(() => child.slots.inject('conversation.input.right', () => child.slots.register({ name: 'conversation.input.right', id: TYPE + '/composer', inject: () => ({ controller }) }, ComposerBridge)));
     if (mobile) {
       disposeMobile = configureMobile();
       child.effect(() => child.slots.inject('conversation.header.leading', () => child.slots.register({ name: 'conversation.header.leading', inject: () => ({ toggle: () => child.layout.toggleSidebar() }) }, MobileMenu)));
+      child.effect(() => child.slots.inject('shell.overlay', () => child.slots.register({ name: 'shell.overlay', id: TYPE + '/mobile-menu', inject: () => ({ global: true, toggle: () => child.layout.toggleSidebar() }) }, MobileMenu)));
       const outside = event => {
         const frame = document.querySelector('[data-rightbar-col]')?.parentElement;
         if (!document.documentElement.classList.contains('dsh-mobile-dense') || !frame || frame.hasAttribute('data-sidebar-collapsed') || !(event.target instanceof Element)) return;
@@ -247,9 +254,8 @@ export async function apply(ctx) {
       window.addEventListener('online', reconnect); document.addEventListener('visibilitychange', reconnect);
       child.effect(() => () => { window.removeEventListener('online', reconnect); document.removeEventListener('visibilitychange', reconnect); });
     } else {
-      child.effect(() => child.sidebarRightTabs.register({ id: TYPE, kind: KIND, title: () => '手机协同', guide: [{ id: 'mobile-collaboration', title: () => '手机协同', description: () => '与手机同步查看和操作', order: 25 }] }));
-      child.effect(() => child.slots.inject('sidebar.right.pane.tab', () => child.slots.register({ name: 'sidebar.right.pane.tab', key: TYPE, inject: () => ({ controller }) }, CollaborationPanel)));
-      child.effect(() => child.slots.inject('conversation.session.header.actions', () => child.slots.register({ name: 'conversation.session.header.actions', id: TYPE + '/open', inject: () => ({ open: () => child.sidebarRight.openTab(KIND) }) }, OpenButton)));
+      child.effect(() => child.slots.inject('sidebar.footer.action', () => child.slots.register({ name: 'sidebar.footer.action', id: TYPE + '/open', inject: () => ({ controller }) }, OpenButton)));
+      child.effect(() => child.slots.inject('shell.overlay', () => child.slots.register({ name: 'shell.overlay', id: TYPE + '/global', inject: () => ({ controller }) }, GlobalCollaboration)));
     }
   });
   await registration;

@@ -3,7 +3,7 @@ import { gzipSync, gunzipSync, strToU8, strFromU8 } from 'fflate';
 import { Wire } from './wire.js';
 
 export class Controller {
-  state = { phones: [], selected: null, connected: false, error: '', suspended: false, joinUrl: '' };
+  state = { phones: [], selected: null, connected: false, error: '', suspended: false, joinUrl: '', opened: false };
   subscribers = new Set(); frames = new Set();
   pendingInputs = new Set();
   constructor(remote, mobile, label) { this.remote = remote; this.mobile = mobile; this.label = label; }
@@ -28,7 +28,10 @@ export class Controller {
     this.pendingInputs.clear();
     for (const fn of this.frames) fn({ type: 'stop' });
     this.update({ selected: id, error: '', suspended: id === null });
+    if (id) this.publishNavigation?.();
   }
+  open() { this.update({ opened: true }); this.start(); }
+  close() { this.update({ opened: false }); this.stop(); }
   start() {
     this.wanted = true; clearTimeout(this.retry);
     if (this.abort) return;
@@ -60,7 +63,10 @@ export class Controller {
   receive(data) {
     if (data.type === 'input-state') this.pendingInputs.delete(data.requestId);
     if (data.type === 'ready') this.update({ connected: true, error: '', suspended: false, joinUrl: data.joinUrl });
-    if (data.type === 'phones') this.update({ phones: data.phones });
+    if (data.type === 'phones') {
+      this.update({ phones: data.phones });
+      if (!this.mobile && this.state.opened && !this.state.selected && !this.state.suspended && data.phones.length === 1) this.watch(data.phones[0].id);
+    }
     if (data.type === 'notice') { this.pendingInputs.clear(); this.update({ error: data.text }); }
     if (data.type === 'offline') this.update({ phones: [], selected: null, error: '手机已断开，重新打开手机网页后可继续', suspended: false });
     if (data.type === 'stopped') this.update({ selected: null, error: '手机已结束协同', suspended: true });
