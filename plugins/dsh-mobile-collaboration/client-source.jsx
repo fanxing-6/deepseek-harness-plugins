@@ -232,6 +232,10 @@ export async function apply(ctx) {
   const registration = ctx.inject(['remote.mobileCollab', 'slots', 'layout', 'uiWorkspace', 'sessions'], child => {
     controller = new Controller(child.remote, mobile, label);
     child.effect(() => synchronizeNavigation(child, controller));
+    const offline = () => controller.stop(false, true);
+    const online = () => { if (mobile || controller.state.opened) controller.start(); };
+    window.addEventListener('offline', offline); window.addEventListener('online', online);
+    child.effect(() => () => { window.removeEventListener('offline', offline); window.removeEventListener('online', online); });
     child.effect(() => child.slots.inject('conversation.input.right', () => child.slots.register({ name: 'conversation.input.right', id: TYPE + '/composer', inject: () => ({ controller }) }, ComposerBridge)));
     if (mobile) {
       disposeMobile = configureMobile();
@@ -251,8 +255,10 @@ export async function apply(ctx) {
       child.effect(() => () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('click', select); });
       disposePhone = startPhone(controller); controller.start();
       const reconnect = () => { if (!document.hidden && !controller.abort) controller.start(); };
-      window.addEventListener('online', reconnect); document.addEventListener('visibilitychange', reconnect);
-      child.effect(() => () => { window.removeEventListener('online', reconnect); document.removeEventListener('visibilitychange', reconnect); });
+      const leave = () => controller.stop();
+      document.addEventListener('visibilitychange', reconnect);
+      window.addEventListener('pageshow', reconnect); window.addEventListener('pagehide', leave);
+      child.effect(() => () => { document.removeEventListener('visibilitychange', reconnect); window.removeEventListener('pageshow', reconnect); window.removeEventListener('pagehide', leave); });
     } else {
       child.effect(() => child.slots.inject('sidebar.footer.action', () => child.slots.register({ name: 'sidebar.footer.action', id: TYPE + '/open', inject: () => ({ controller }) }, OpenButton)));
       child.effect(() => child.slots.inject('shell.overlay', () => child.slots.register({ name: 'shell.overlay', id: TYPE + '/global', inject: () => ({ controller }) }, GlobalCollaboration)));

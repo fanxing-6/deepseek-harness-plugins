@@ -31,6 +31,7 @@ const message = z.discriminatedUnion('type', [
 export default class MobileCollaboration extends TypertRemoteService {
   static inject = ['typert'];
   peers = new Map();
+  foregroundRevision = 0;
   constructor(ctx, config) { super(ctx, 'mobileCollab'); this.joinUrl = new URL(config.joinUrl).href; }
 
   send(peer, data) {
@@ -64,38 +65,40 @@ export default class MobileCollaboration extends TypertRemoteService {
     peer.seen = Date.now();
     if (data.type === 'hello') {
       if (peer.info) throw new Error('协同设备重复登记');
-      peer.info = { mobile: data.mobile, label: data.label, visible: data.visible, viewport: data.viewport };
+      peer.info = { mobile: data.mobile, label: data.label, visible: data.visible, viewport: data.viewport, foreground: data.mobile && data.visible ? ++this.foregroundRevision : 0, paused: false };
       this.send(peer, { type: 'ready', id: peer.id, joinUrl: this.joinUrl });
       this.roster(); return;
     }
     if (!peer.info) throw new Error('协同设备尚未登记');
     if (data.type === 'ping') return;
     if (data.type === 'presence') {
+      if (peer.info.mobile && data.visible && !peer.info.visible) peer.info.foreground = ++this.foregroundRevision;
       peer.info.visible = data.visible; peer.info.viewport = data.viewport;
       this.roster();
-      for (const id of peer.watchers) this.send(this.peers.get(id), { type: 'viewport', viewport: data.viewport, visible: data.visible });
+      for (const id of peer.watchers) this.send(this.peers.get(id), { type: 'viewport', phone: peer.id, viewport: data.viewport, visible: data.visible });
     } else if (data.type === 'watch') {
       if (peer.info.mobile) throw new Error('手机连接不能控制其他设备');
       this.unwatch(peer);
       if (data.phone === null) return;
       const phone = this.peers.get(data.phone);
-      if (!phone?.info?.mobile || phone.closed) { this.send(peer, { type: 'offline' }); this.roster(); return; }
+      if (!phone?.info?.mobile || phone.closed) { this.send(peer, { type: 'offline', phone: data.phone }); this.roster(); return; }
+      phone.info.paused = false;
       peer.watching = phone.id; phone.watchers.add(peer.id);
-      for (const id of phone.watchers) this.send(this.peers.get(id), { type: 'reset', viewport: phone.info.viewport, visible: phone.info.visible });
+      for (const id of phone.watchers) this.send(this.peers.get(id), { type: 'reset', phone: phone.id, viewport: phone.info.viewport, visible: phone.info.visible });
       this.send(phone, { type: 'start' });
     } else if (data.type === 'navigation') {
       if (peer.info.mobile) {
-        for (const id of peer.watchers) this.send(this.peers.get(id), data);
+        for (const id of peer.watchers) this.send(this.peers.get(id), { ...data, phone: peer.id });
       } else {
         const phone = this.peers.get(peer.watching);
         if (phone?.watchers.has(peer.id) && !phone.closed) this.send(phone, data);
       }
     } else if (data.type === 'event') {
       if (!peer.info.mobile) throw new Error('画面来源必须是手机');
-      for (const id of peer.watchers) this.send(this.peers.get(id), data);
+      for (const id of peer.watchers) this.send(this.peers.get(id), { ...data, phone: peer.id });
     } else if (data.type === 'command') {
       const phone = this.peers.get(peer.watching);
-      if (!phone?.watchers.has(peer.id) || phone.closed) { this.unwatch(peer); this.send(peer, { type: 'offline' }); this.roster(); return; }
+      if (!phone?.watchers.has(peer.id) || phone.closed) { const id = peer.watching; this.unwatch(peer); this.send(peer, { type: 'offline', phone: id }); this.roster(); return; }
       if (data.command.action === 'hold') {
         if (data.command.phase === 'start') {
           if (peer.hold) this.send(phone, { type: 'command', command: { ...peer.hold, phase: 'cancel' } });
@@ -107,10 +110,12 @@ export default class MobileCollaboration extends TypertRemoteService {
       }
       this.send(phone, data);
     } else if (data.type === 'notice' || data.type === 'input-state') {
-      for (const id of peer.watchers) this.send(this.peers.get(id), data);
+      for (const id of peer.watchers) this.send(this.peers.get(id), { ...data, phone: peer.id });
     } else if (data.type === 'stop') {
-      for (const id of peer.watchers) { const viewer = this.peers.get(id); viewer.watching = null; this.send(viewer, { type: 'stopped' }); }
+      peer.info.paused = true;
+      for (const id of peer.watchers) { const viewer = this.peers.get(id); viewer.watching = null; this.send(viewer, { type: 'stopped', phone: peer.id }); }
       peer.watchers.clear(); this.send(peer, { type: 'stop' });
+      this.roster();
     }
   }
   async *connect(signal) {
@@ -137,7 +142,7 @@ export default class MobileCollaboration extends TypertRemoteService {
     } finally {
       clearInterval(expiry); signal.removeEventListener('abort', abort);
       this.unwatch(peer); this.peers.delete(peer.id);
-      for (const id of peer.watchers) { const viewer = this.peers.get(id); if (viewer) { viewer.watching = null; this.send(viewer, { type: 'offline' }); } }
+      for (const id of peer.watchers) { const viewer = this.peers.get(id); if (viewer) { viewer.watching = null; this.send(viewer, { type: 'offline', phone: peer.id }); } }
       this.roster(); void reading;
     }
   }
