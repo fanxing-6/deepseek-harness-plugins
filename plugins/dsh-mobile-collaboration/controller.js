@@ -46,7 +46,9 @@ export class Controller {
     const abort = new AbortController(); this.abort = abort;
     this.handle = this.remote.mobileCollab.connect(abort.signal);
     this.wire = new Wire(json => this.handle.send({ json }), data => this.receive(data), { encode: text => gzipSync(strToU8(text)), decode: bytes => strFromU8(gunzipSync(bytes)) });
-    this.send({ type: 'hello', mobile: this.mobile, label: this.label, visible: !document.hidden, viewport: phoneViewport() });
+    const captureId = document.documentElement.dataset.mobileCollabCapture ?? crypto.randomUUID();
+    document.documentElement.dataset.mobileCollabCapture = captureId;
+    this.send({ type: 'hello', mobile: this.mobile, label: this.label, captureId, visible: !document.hidden, viewport: phoneViewport() });
     this.heartbeat = setInterval(() => { if (this.handle) this.send({ type: 'ping' }); }, 15000);
     void (async () => {
       let reconnect = false;

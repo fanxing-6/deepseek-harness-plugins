@@ -12,5 +12,7 @@ work/
 https-config.json
 server.json
 server.json.new
+mobile-collaboration-capture.json
+adbkey*
 plugins/dsh-volcengine-asr/client.js
 plugins/dsh-mobile-collaboration/client.js

@@ -3,9 +3,14 @@ import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { z } from 'zod';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { Wire } from './wire.js';
+import { NativeCapture } from './native-capture.js';
 
 const viewport = z.object({ width: z.number().positive().max(10000), height: z.number().positive().max(10000), layoutWidth: z.number().positive().max(10000), layoutHeight: z.number().positive().max(10000), left: z.number(), top: z.number(), dpr: z.number().positive() }).strict();
 const command = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('wheel'), x: z.number().finite(), y: z.number().finite(), dx: z.number().finite(), dy: z.number().finite() }),
+  z.object({ action: z.literal('pointer'), pointerId: z.number().int(), phase: z.enum(['start','move','end','cancel']), x: z.number().finite(), y: z.number().finite() }),
+  z.object({ action: z.literal('text'), text: z.string().max(100000) }),
+  z.object({ action: z.literal('keyboard'), key: z.string().max(50), code: z.string().max(50), keyCode: z.number().int(), modifiers: z.number().int().min(0).max(15) }),
   z.object({ action: z.literal('click'), id: z.number().int(), x: z.number(), y: z.number() }),
   z.object({ action: z.literal('hold'), id: z.number().int(), pressId: z.string().uuid(), phase: z.enum(['start', 'move', 'end', 'cancel']), x: z.number().finite().optional(), y: z.number().finite().optional() }),
   z.object({ action: z.literal('scroll'), id: z.number().int(), dx: z.number(), dy: z.number() }),
@@ -16,7 +21,7 @@ const command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('key'), id: z.number().int(), key: z.enum(['Escape', 'Tab']) }),
 ]);
 const message = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('hello'), mobile: z.boolean(), label: z.string().max(80), visible: z.boolean(), viewport }),
+  z.object({ type: z.literal('hello'), mobile: z.boolean(), label: z.string().max(80), captureId: z.string().uuid().optional(), visible: z.boolean(), viewport }),
   z.object({ type: z.literal('presence'), visible: z.boolean(), viewport }),
   z.object({ type: z.literal('watch'), phone: z.string().uuid().nullable() }),
   z.object({ type: z.literal('navigation'), state: z.object({ selection: z.object({ sessionId: z.string().max(300).optional(), subagentAddress: z.record(z.string(), z.unknown()).optional() }).strict(), panelId: z.string().max(300).nullable() }).strict() }),
@@ -50,6 +55,31 @@ export default class MobileCollaboration extends TypertRemoteService {
     const phones = [...this.peers.values()].filter(p => p.info?.mobile && !p.closed).map(p => ({ id: p.id, ...p.info }));
     for (const peer of this.peers.values()) if (peer.info && !peer.info.mobile) this.send(peer, { type: 'phones', phones });
   }
+  capture(phone) {
+    if (phone.capture) return;
+    const publish = () => {
+      if (phone.closed || !phone.latestPixels) return;
+      for (const id of phone.watchers) {
+        const peer = this.peers.get(id);
+        if (peer && peer.wire.queued === 0 && peer.pixelSequence !== phone.latestPixels.sequence) {
+          peer.pixelSequence = phone.latestPixels.sequence;
+          this.send(peer, { ...phone.latestPixels, viewport: phone.info.viewport, phone: phone.id });
+        }
+      }
+    };
+    const fail = error => {
+      if (phone.closed || !phone.capture) return;
+      for (const id of phone.watchers) this.send(this.peers.get(id), { type: 'notice', phone: phone.id, text: error.message });
+    };
+    phone.capture = new NativeCapture(phone.info, new URL(this.joinUrl).origin, frame => { phone.latestPixels = frame; publish(); }, fail);
+    phone.pixelTimer = setInterval(publish, 60); phone.pixelTimer.unref();
+    void phone.capture.start().catch(fail);
+  }
+  releaseCapture(phone) {
+    clearInterval(phone.pixelTimer); phone.latestPixels = null;
+    const capture = phone.capture; phone.capture = null;
+    if (capture) void capture.close().catch(error => console.error('手机画面连接清理失败：', error.message));
+  }
   unwatch(peer) {
     const phone = this.peers.get(peer.watching);
     if (phone && peer.hold) this.send(phone, { type: 'command', command: { ...peer.hold, phase: 'cancel' } });
@@ -57,7 +87,7 @@ export default class MobileCollaboration extends TypertRemoteService {
     peer.watching = null;
     if (phone) {
       phone.watchers.delete(peer.id);
-      if (!phone.watchers.size) this.send(phone, { type: 'stop' });
+      if (!phone.watchers.size) { this.send(phone, { type: 'stop' }); this.releaseCapture(phone); }
     }
   }
   receive(peer, raw) {
@@ -65,7 +95,7 @@ export default class MobileCollaboration extends TypertRemoteService {
     peer.seen = Date.now();
     if (data.type === 'hello') {
       if (peer.info) throw new Error('协同设备重复登记');
-      peer.info = { mobile: data.mobile, label: data.label, visible: data.visible, viewport: data.viewport, foreground: data.mobile && data.visible ? ++this.foregroundRevision : 0, paused: false };
+      peer.info = { mobile: data.mobile, label: data.label, captureId: data.captureId, visible: data.visible, viewport: data.viewport, foreground: data.mobile && data.visible ? ++this.foregroundRevision : 0, paused: false };
       this.send(peer, { type: 'ready', id: peer.id, joinUrl: this.joinUrl });
       this.roster(); return;
     }
@@ -84,8 +114,10 @@ export default class MobileCollaboration extends TypertRemoteService {
       if (!phone?.info?.mobile || phone.closed) { this.send(peer, { type: 'offline', phone: data.phone }); this.roster(); return; }
       phone.info.paused = false;
       peer.watching = phone.id; phone.watchers.add(peer.id);
+      peer.pixelSequence = null;
       for (const id of phone.watchers) this.send(this.peers.get(id), { type: 'reset', phone: phone.id, viewport: phone.info.viewport, visible: phone.info.visible });
       this.send(phone, { type: 'start' });
+      this.capture(phone);
     } else if (data.type === 'navigation') {
       if (peer.info.mobile) {
         for (const id of peer.watchers) this.send(this.peers.get(id), { ...data, phone: peer.id });
@@ -99,6 +131,12 @@ export default class MobileCollaboration extends TypertRemoteService {
     } else if (data.type === 'command') {
       const phone = this.peers.get(peer.watching);
       if (!phone?.watchers.has(peer.id) || phone.closed) { const id = peer.watching; this.unwatch(peer); this.send(peer, { type: 'offline', phone: id }); this.roster(); return; }
+      if (['wheel','pointer','text','keyboard'].includes(data.command.action)) {
+        if (!phone.capture) { this.send(peer, { type: 'notice', phone: phone.id, text: '手机原始画面尚未连接' }); return; }
+        const capture = phone.capture;
+        capture.commands = (capture.commands ?? Promise.resolve()).then(() => capture.input(data.command)).catch(error => this.send(peer, { type: 'notice', phone: phone.id, text: error.message }));
+        return;
+      }
       if (data.command.action === 'hold') {
         if (data.command.phase === 'start') {
           if (peer.hold) this.send(phone, { type: 'command', command: { ...peer.hold, phase: 'cancel' } });
@@ -115,6 +153,7 @@ export default class MobileCollaboration extends TypertRemoteService {
       peer.info.paused = true;
       for (const id of peer.watchers) { const viewer = this.peers.get(id); viewer.watching = null; this.send(viewer, { type: 'stopped', phone: peer.id }); }
       peer.watchers.clear(); this.send(peer, { type: 'stop' });
+      this.releaseCapture(peer);
       this.roster();
     }
   }
@@ -141,6 +180,7 @@ export default class MobileCollaboration extends TypertRemoteService {
       if (peer.failure) throw peer.failure;
     } finally {
       clearInterval(expiry); signal.removeEventListener('abort', abort);
+      this.releaseCapture(peer);
       this.unwatch(peer); this.peers.delete(peer.id);
       for (const id of peer.watchers) { const viewer = this.peers.get(id); if (viewer) { viewer.watching = null; this.send(viewer, { type: 'offline', phone: peer.id }); } }
       this.roster(); void reading;
