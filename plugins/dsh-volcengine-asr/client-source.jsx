@@ -3,13 +3,16 @@ import { IconMicrophoneOutlineRegular } from '@deepseek-ai/dsh-client-ui-primiti
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store';
 import { TYPERT_REMOTE } from './remote.js';
 import { Recording } from './capture.js';
+import { VoiceArchive, listRecordings, readAudio, readTranscripts } from './archive.js';
 import styles from './style.css';
 
 export const inject = ['remote', 'slots'];
 
 function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, remote, microphone, recordings }) {
   const [voiceMode, setVoiceMode] = useState(false);
-  const draft = useInput(state => state?.draft ?? '');
+  const input = useInput(state => state);
+  const draft = input?.draft ?? '';
+  const inputState = useRef(input); inputState.current = input;
   const generating = useSession(state => state.running) ?? false;
   const root = useRef(null);
   const [phase, setPhase] = useState('idle');
@@ -18,6 +21,12 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
   const [cancelArmed, setCancelArmed] = useState(false);
   const current = useRef(null);
   const held = useRef(null);
+  const [history, setHistory] = useState(null);
+
+  async function showHistory() {
+    try { setHistory(await listRecordings()); }
+    catch (failure) { setError('读取语音记录失败：' + failure.message); }
+  }
 
   useEffect(() => { setVoiceMode(false); }, [sessionId]);
 
@@ -28,11 +37,10 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
   }
 
   async function release(active) {
-    clearTimeout(active.submitTimer);
+    clearTimeout(active.waitTimer);
     active.abort.abort();
     active.handle?.dispose();
-    await active.recording.dispose();
-    recordings.delete(active.recording);
+    if (active.recording) { await active.recording.dispose(); recordings.delete(active.recording); }
   }
 
   async function abortRecording(discard = true) {
@@ -44,30 +52,43 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
       message = '草稿已被修改，录音已取消，请检查输入内容。';
     }
     setPhase('idle'); setError(message); setLevel(0); setCancelArmed(false);
+    if (active) void active.archive.save({ status: discard ? 'cancelled' : 'interrupted' }).catch(failure => setError('语音记录保存失败：' + failure.message));
     if (active) await release(active);
   }
 
-  function updateTranscript(active, text) {
-    if (text === active.text) return;
-    if (!inputActions.insertText(text, active.span)) throw new Error('输入框已修改，听写已停止。');
+  async function updateTranscript(active, text, final) {
+    await active.archive.transcript(text, final);
+    if (current.current !== active || text === active.text) return;
+    active.text = text;
+    if (!inputActions.insertText(text, active.span)) throw new Error('输入框已修改，完整转写保存在语音记录中。');
     const { draftRev } = inputActions.captureInsertion();
     active.span = { start: active.span.start, end: active.span.start + text.length, draftRev };
-    active.text = text;
   }
 
   async function fail(active, failure) {
-    if (current.current !== active) return;
-    held.current = null;
-    current.current = null;
-    setPhase('idle'); setError(failure.message); setLevel(0); setCancelArmed(false);
+    if (current.current !== active || active.failing || active.submitting) return;
+    active.failing = true;
     await release(active);
+    active.failure = failure;
+    active.phase = 'ready'; setPhase('ready'); setError(failure.message + '；已保留语音记录。'); setLevel(0);
+    void active.archive.save({ status: 'interrupted', error: failure.message }).catch(error => setError('语音记录保存失败：' + error.message + '；请保留当前页面中的文字。'));
+    active.failing = false;
+    if (active.released) await submitFinal(active);
   }
 
   useEffect(() => {
     setPhase('idle'); setError(''); setLevel(0); setCancelArmed(false);
     const escape = event => { if (event.key === 'Escape' && current.current) { event.preventDefault(); void abortRecording(); } };
-    const hidden = () => { if (document.hidden && held.current) void abortRecording(false); };
-    const blur = () => { if (held.current) void abortRecording(false); };
+    const complete = () => {
+      if (!held.current) return;
+      const cancel = held.current.cancel;
+      held.current = null;
+      if (cancel) void abortRecording(); else void finish();
+    };
+    const hidden = () => { if (document.hidden) complete(); };
+    const blur = complete;
+    const pointerUp = event => { if (held.current?.pointerId === event.pointerId) lift(event); };
+    window.addEventListener('pointerup', pointerUp, true);
     document.addEventListener('keydown', escape);
     document.addEventListener('visibilitychange', hidden);
     window.addEventListener('blur', blur);
@@ -75,6 +96,7 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
       document.removeEventListener('keydown', escape);
       document.removeEventListener('visibilitychange', hidden);
       window.removeEventListener('blur', blur);
+      window.removeEventListener('pointerup', pointerUp, true);
       held.current = null;
       const active = current.current;
       current.current = null;
@@ -82,28 +104,42 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
     };
   }, [sessionId]);
 
-  function submitFinal(active) {
-    if (current.current !== active || !active.released) return;
-    if (inputActions.captureInsertion().draftRev !== active.span.draftRev) throw new Error('输入框已修改，请检查内容后发送。');
-    clearTimeout(active.submitTimer);
-    current.current = null;
-    setPhase('idle'); setLevel(0); setCancelArmed(false);
-    if (active.text.trim()) inputActions.submit();
-    else setError('尚未收到识别文字，请重新按住说话。');
-    void release(active);
+  async function submitFinal(active) {
+    if (current.current !== active || !active.released || active.submitting) return;
+    active.submitting = true;
+    try {
+      if (!active.text.trim()) throw new Error(active.archive.audioIndex ? '未收到识别文字，录音已保存在语音记录中，可重新识别并发送。' : '麦克风尚未采集到音频，请允许麦克风访问后重新录音。');
+      if (inputActions.captureInsertion().draftRev !== active.span.draftRev) throw new Error('输入框内容已经变化，完整转写保存在语音记录中，请恢复后发送。');
+      clearTimeout(active.waitTimer);
+      active.phase = 'submitting'; setPhase('submitting'); setLevel(0); setCancelArmed(false);
+      inputActions.submit();
+      const deadline = Date.now() + 20000;
+      while (current.current === active) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const state = inputState.current;
+        if (state && !state.draft.trim() && state.phase === 'plain') {
+          await active.archive.save({ status: 'submitted' });
+          if (current.current === active) { current.current = null; setPhase('idle'); setError(active.failure ? '识别连接中断，已发送收到的文字；录音保留在语音记录中。' : ''); }
+          return;
+        }
+        if (Date.now() >= deadline) throw new Error('尚未确认消息发送成功，文字和录音已保留。请检查消息或待发送队列。');
+      }
+    } catch (failure) {
+      if (current.current === active) { current.current = null; setPhase('idle'); setError(failure.message); }
+    } finally { await release(active); }
   }
 
   async function finish(released = true) {
     const active = current.current;
     if (!active) return;
     active.released ||= released;
-    if (released && !active.submitTimer) {
-      active.submitTimer = setTimeout(() => {
-        try { submitFinal(active); } catch (failure) { void fail(active, failure); }
-      }, 900);
+    if (released && !active.waitTimer) {
+      active.waitTimer = setTimeout(() => {
+        if (current.current === active && !active.submitting) setError('正在等待完整识别结果，文字和录音已保留，完成后自动发送。');
+      }, 1200);
     }
     if (active.phase === 'ready') {
-      try { submitFinal(active); } catch (failure) { await fail(active, failure); }
+      await submitFinal(active);
       return;
     }
     if (!['recording', 'connecting'].includes(active.phase)) return;
@@ -134,7 +170,7 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
     }
     const insertion = inputActions.captureInsertion();
     const active = {
-      abort, recording,
+      abort, recording, archive: new VoiceArchive(sessionId),
       span: { ...insertion, start: insertion.end }, text: '',
       sent: 0, acknowledged: 0, phase: 'connecting', released: false, finalReceived: false,
       pending: [], serverReady: false, audioEnded: false,
@@ -143,11 +179,13 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
     recordings.add(active.recording);
     setPhase('connecting'); setError(''); setLevel(0); setCancelArmed(false);
     try {
+      await active.archive.save({});
       await recording.open(microphone.getSnapshot().id, failure => { void fail(active, failure); });
       if (current.current !== active) { await recording.dispose(); return; }
       if (!active.audioEnded) {
         recording.start((bytes, volume) => {
           try {
+            void active.archive.audio(bytes).catch(failure => { void fail(active, failure); });
             if (active.maxBytes && active.sent >= active.maxBytes) return;
             if (active.sent - active.acknowledged > 64000) throw new Error('音频发送超时，已保留识别文字。');
             setLevel(Math.max(0, Math.min(1, (20 * Math.log10(Math.max(volume, 0.000001)) + 60) / 60)));
@@ -174,16 +212,16 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
         } else if (frame.type === 'ack') {
           active.acknowledged = frame.bytes;
         } else {
-          updateTranscript(active, frame.text);
+          await updateTranscript(active, frame.text, frame.final);
           if (frame.final) {
             active.finalReceived = true;
             setLevel(0);
-            if (active.released) { submitFinal(active); return; }
+            if (active.released) { await submitFinal(active); return; }
           }
         }
       }
       if (!active.finalReceived && current.current === active) throw new Error('听写连接已结束，未收到最终结果');
-      if (current.current === active) { active.phase = 'ready'; setPhase('ready'); submitFinal(active); }
+      if (current.current === active) { active.phase = 'ready'; setPhase('ready'); await submitFinal(active); }
     } catch (failure) { await fail(active, failure); }
   }
 
@@ -216,7 +254,9 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
   }
 
   function cancelPointer(event) {
-    if (held.current?.pointerId === event.pointerId) void abortRecording();
+    if (held.current?.pointerId !== event.pointerId) return;
+    const cancel = held.current.cancel; held.current = null;
+    if (cancel) void abortRecording(); else void finish();
   }
 
   function keyDown(event) {
@@ -232,7 +272,43 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
   }
 
   const active = phase !== 'idle';
-  const label = cancelArmed && active ? '松开取消' : phase === 'connecting' ? '正在准备录音' : phase === 'finishing' ? '正在识别并发送' : active ? '松开发送' : '按住说话';
+  async function recover(entry, audio = false) {
+    if (current.current || locked) return;
+    const existing = inputState.current?.draft ?? '';
+    if (existing.trim() && existing !== entry.text) { setError('当前输入框有其他草稿，请处理草稿后再发送语音记录。'); return; }
+    const abort = new AbortController();
+    const insertion = inputActions.captureInsertion();
+    const active = { abort, archive: new VoiceArchive(sessionId), span: existing ? { ...insertion, start: 0, end: existing.length } : { ...insertion, start: insertion.end }, text: '', released: true, phase: 'finishing' };
+    current.current = active; setPhase('finishing'); setError(''); setHistory(null);
+    try {
+      await active.archive.save({ sourceId: entry.id });
+      if (!audio) { await updateTranscript(active, entry.text, true); await submitFinal(active); return; }
+      const chunks = await readAudio(entry.id);
+      if (!chunks.length) throw new Error('这条语音记录没有音频，请恢复已经识别的文字。');
+      active.handle = remote.volcSpeech.recognize(abort.signal);
+      for await (const frame of active.handle) {
+        if (current.current !== active) return;
+        if (frame.type === 'ready') {
+          active.upload = (async () => {
+            for (const chunk of chunks) {
+              abort.signal.throwIfAborted();
+              await active.archive.audio(chunk.bytes);
+              active.handle.send({ audioBase64: btoa(String.fromCharCode(...chunk.bytes)) });
+              await new Promise(resolve => setTimeout(resolve, chunk.bytes.length / 32));
+            }
+            active.handle.end();
+          })();
+          void active.upload.catch(failure => fail(active, failure));
+        } else if (frame.type === 'transcript') {
+          await updateTranscript(active, frame.text, frame.final);
+          if (frame.final) { await submitFinal(active); return; }
+        }
+      }
+      throw new Error('识别连接中断');
+    } catch (failure) { await fail(active, failure); }
+  }
+
+  const label = cancelArmed && active ? '松开取消' : phase === 'connecting' ? '正在准备录音' : phase === 'submitting' ? '正在发送' : phase === 'finishing' ? '正在识别，完成后发送' : active ? '松开发送' : '按住说话';
   return <div ref={root} className="dsh-voice-panel" data-volc-mode={voiceMode ? 'voice' : 'text'} data-volc-generating={generating}>
       {voiceMode && draft.trim() && <div className="dsh-voice-transcript" aria-label="语音转写内容" aria-live="polite">{draft}</div>}
       <div className="dsh-voice-row">
@@ -255,6 +331,19 @@ function VoiceInput({ sessionId, inputActions, useInput, useSession, locked, rem
         </button>
       </div>
     {error && <div role="alert" className="dsh-voice-error">{error}</div>}
+    {voiceMode && <button type="button" className="dsh-voice-history-toggle" onClick={showHistory}>语音记录</button>}
+    {history && <div className="dsh-voice-history" role="dialog" aria-label="语音记录">
+      <button type="button" onClick={() => setHistory(null)}>关闭语音记录</button>
+      {!history.length && <p>当前浏览器暂无语音记录。</p>}
+      {history.map(entry => <div key={entry.id}>
+        <div>{new Date(entry.created).toLocaleString()} · {entry.status === 'submitted' ? '已提交' : '已保留'}</div>
+        <p>{entry.text || '录音已保留，尚未识别到文字。'}</p>
+        <button type="button" disabled={active || !entry.text} onClick={() => recover(entry)}>发送这段文字</button>
+        <button type="button" disabled={active} onClick={() => recover(entry, true)}>重新识别并发送</button>
+        <button type="button" onClick={async () => { try { const versions = await readTranscripts(entry.id); setHistory(values => values.map(value => value.id === entry.id ? { ...value, versions } : value)); } catch (failure) { setError(failure.message); } }}>查看识别过程</button>
+        {entry.versions?.map(value => <p key={value.index}>{value.text}</p>)}
+      </div>)}
+    </div>}
   </div>;
 }
 
